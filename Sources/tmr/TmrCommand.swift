@@ -17,8 +17,9 @@ struct Tmr: ParsableCommand {
           tmr -a Submarine 90     pick a system sound
           tmr -a ~/gong.wav 1h    pick a file
           tmr -s 30               no sound
+          tmr -b -u 25m           window plus a BUSY Bar
         """,
-        version: "0.2.0"
+        version: "0.4.0"
     )
 
     @Argument(help: "Duration: 90, 5m, 1h30m, 25:00.")
@@ -49,6 +50,22 @@ struct Tmr: ParsableCommand {
 
     @Flag(help: "List the available alert sounds and exit.")
     var listSounds = false
+
+    @Flag(name: [.short, .long], help: "Also show the countdown on a BUSY Bar.")
+    var bar = false
+
+    @Option(name: .customLong("bar-host"), help: "Bar address. Default is the USB one.")
+    var barHost: String = "10.0.4.20"
+
+    @Option(name: .customLong("bar-token"), help: "Bar access key, needed over Wi-Fi only.")
+    var barToken: String?
+
+    @Option(name: .customLong("bar-sound"),
+            help: "Stock sound the bar plays when time is up, or 'none'.")
+    var barSound: String = "finish"
+
+    @Flag(name: .customLong("list-bar-sounds"), help: "List the bar's stock sounds and exit.")
+    var listBarSounds = false
 
     /// ArgumentParser has no notion of an option whose value is optional, but
     /// `-a` on its own is part of the interface, so a bare `-a` gets the
@@ -86,6 +103,13 @@ struct Tmr: ParsableCommand {
             return
         }
 
+        if listBarSounds {
+            for sound in BusyBarClient.StockSound.allCases {
+                print("\(sound.shortName)\t\(sound.rawValue)")
+            }
+            return
+        }
+
         guard let spec = time ?? timespec else {
             throw ValidationError("give me a duration, e.g. tmr 5m")
         }
@@ -107,16 +131,35 @@ struct Tmr: ParsableCommand {
 
         let engine = TimerEngine(duration: duration, name: name)
         let policy = SessionPolicy(ring: ring, quitAfter: quitAfter, silent: silent)
+        let barOutput = try makeBarOutput()
 
         // Held in a local so the driver is not a temporary that ARC may
         // release out from under its own callbacks.
         if ui {
-            let driver = HUDDriver(engine: engine, alert: alertPlayer, policy: policy)
+            let driver = HUDDriver(engine: engine, alert: alertPlayer, policy: policy, bar: barOutput)
             driver.run()
         } else {
-            let driver = TerminalDriver(engine: engine, alert: alertPlayer, policy: policy)
+            let driver = TerminalDriver(engine: engine, alert: alertPlayer, policy: policy, bar: barOutput)
             driver.run()
         }
+    }
+
+    private func makeBarOutput() throws -> BarOutput? {
+        guard bar else { return nil }
+
+        guard let client = BusyBarClient(host: barHost, token: barToken) else {
+            throw ValidationError("bad --bar-host: \(barHost)")
+        }
+
+        var sound: BusyBarClient.StockSound?
+        if !silent && barSound.lowercased() != "none" {
+            sound = BusyBarClient.StockSound.named(barSound)
+            if sound == nil {
+                throw ValidationError("unknown --bar-sound '\(barSound)'; see --list-bar-sounds")
+            }
+        }
+
+        return BarOutput(renderer: BarRenderer(client: client), sound: sound)
     }
 
     private func warn(_ message: String) {

@@ -50,17 +50,30 @@ struct SessionPolicy {
     }
 }
 
+/// The bar as an output: the renderer plus the sound it plays on finish.
+struct BarOutput {
+    let renderer: BarRenderer
+    let sound: BusyBarClient.StockSound?
+
+    func alert() {
+        guard let sound = sound else { return }
+        renderer.alert(sound)
+    }
+}
+
 /// Drives the countdown in the terminal with a plain polling loop.
 final class TerminalDriver {
     private let engine: TimerEngine
     private let alert: Alert?
     private let policy: SessionPolicy
+    private let bar: BarOutput?
     private let renderer: TimerRenderer
 
-    init(engine: TimerEngine, alert: Alert?, policy: SessionPolicy) {
+    init(engine: TimerEngine, alert: Alert?, policy: SessionPolicy, bar: BarOutput?) {
         self.engine = engine
         self.alert = alert
         self.policy = policy
+        self.bar = bar
         self.renderer = Terminal.isInteractive ? TUIRenderer() : PlainRenderer()
     }
 
@@ -69,9 +82,12 @@ final class TerminalDriver {
         var finishedAt: Date?
 
         renderer.start()
+        Terminal.installInterruptHandler()
+        bar?.renderer.probe()
         defer {
             renderer.stop()
             alert?.stop()
+            bar?.renderer.shutdown()
         }
 
         while true {
@@ -80,10 +96,19 @@ final class TerminalDriver {
             if engine.update(now: now).contains(.finished) {
                 finishedAt = now
                 startAlert()
+                bar?.alert()
             }
 
-            renderer.render(engine.snapshot(now: now))
+            let snapshot = engine.snapshot(now: now)
+            renderer.render(snapshot)
+            bar?.renderer.update(snapshot, now: now)
             alert?.pump()
+
+            if Terminal.wasInterrupted {
+                engine.apply(.stop, now: now)
+                renderer.render(engine.snapshot(now: now))
+                return
+            }
 
             if let key = renderer.readKey() {
                 if policy.handle(key: key, engine: engine, now: now, finished: finishedAt != nil) == .quit {
@@ -119,13 +144,15 @@ final class HUDDriver {
     private let engine: TimerEngine
     private let alert: Alert?
     private let policy: SessionPolicy
+    private let bar: BarOutput?
     private let controller = HUDController()
     private var finishedAt: Date?
 
-    init(engine: TimerEngine, alert: Alert?, policy: SessionPolicy) {
+    init(engine: TimerEngine, alert: Alert?, policy: SessionPolicy, bar: BarOutput?) {
         self.engine = engine
         self.alert = alert
         self.policy = policy
+        self.bar = bar
     }
 
     func run() {
@@ -135,6 +162,8 @@ final class HUDDriver {
         controller.onKey = { character in
             self.handle(key: character)
         }
+        Terminal.installInterruptHandler()
+        bar?.renderer.probe()
         controller.show()
         controller.update(engine.snapshot(now: Date()))
 
@@ -153,10 +182,18 @@ final class HUDDriver {
         if engine.update(now: now).contains(.finished) {
             finishedAt = now
             alert?.play()
+            bar?.alert()
         }
 
-        controller.update(engine.snapshot(now: now))
+        let snapshot = engine.snapshot(now: now)
+        controller.update(snapshot)
+        bar?.renderer.update(snapshot, now: now)
         alert?.pump()
+
+        if Terminal.wasInterrupted {
+            quit()
+            return
+        }
 
         if let finishedAt = finishedAt,
            policy.shouldExit(finishedAt: finishedAt, now: now, alert: alert) {
@@ -180,6 +217,7 @@ final class HUDDriver {
     private func quit() {
         alert?.stop()
         controller.close()
+        bar?.renderer.shutdown()
         exit(0)
     }
 }

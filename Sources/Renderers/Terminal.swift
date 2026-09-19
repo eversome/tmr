@@ -5,6 +5,9 @@ import Foundation
 /// can still put the terminal back the way it found it.
 private var savedTermios: termios?
 
+/// Set from the SIGINT handler, which may not touch anything else.
+private var interruptCount: sig_atomic_t = 0
+
 public enum Terminal {
     public static var isInteractive: Bool {
         isatty(STDOUT_FILENO) == 1 && isatty(STDIN_FILENO) == 1
@@ -91,12 +94,20 @@ public enum Terminal {
     public static func moveUp(_ lines: Int) { if lines > 0 { write("\u{1B}[\(lines)A") } }
     public static func bell() { write("\u{7}") }
 
+    /// True once the person has pressed Ctrl-C. Drivers poll this and shut
+    /// down in an orderly way, which matters when a BUSY Bar is showing our
+    /// layer: killing the process outright would leave it stuck on the device.
+    /// A second Ctrl-C is the escape hatch and exits immediately.
+    public static var wasInterrupted: Bool { interruptCount > 0 }
+
     public static func installInterruptHandler() {
         signal(SIGINT) { _ in
-            Terminal.restoreMode()
-            Terminal.showCursor()
-            Terminal.write("\n")
-            _exit(130)
+            interruptCount += 1
+            if interruptCount > 1 {
+                Terminal.restoreMode()
+                Terminal.showCursor()
+                _exit(130)
+            }
         }
     }
 }
