@@ -108,10 +108,14 @@ struct Tmr: ParsableCommand {
         let engine = TimerEngine(duration: duration, name: name)
         let policy = SessionPolicy(ring: ring, quitAfter: quitAfter, silent: silent)
 
+        // Held in a local so the driver is not a temporary that ARC may
+        // release out from under its own callbacks.
         if ui {
-            HUDDriver(engine: engine, alert: alertPlayer, policy: policy).run()
+            let driver = HUDDriver(engine: engine, alert: alertPlayer, policy: policy)
+            driver.run()
         } else {
-            TerminalDriver(engine: engine, alert: alertPlayer, policy: policy).run()
+            let driver = TerminalDriver(engine: engine, alert: alertPlayer, policy: policy)
+            driver.run()
         }
     }
 

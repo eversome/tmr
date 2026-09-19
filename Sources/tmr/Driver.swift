@@ -129,14 +129,17 @@ final class HUDDriver {
     }
 
     func run() {
-        controller.onKey = { [weak self] character in
-            self?.handle(key: character)
+        // Strong captures on purpose. The driver has to outlive this call for
+        // as long as the window is up, and nothing else owns it. That is a
+        // retain cycle, which is fine here: quit() ends the process outright.
+        controller.onKey = { character in
+            self.handle(key: character)
         }
         controller.show()
         controller.update(engine.snapshot(now: Date()))
 
-        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.tick()
+        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+            self.tick()
         }
         // .common keeps the countdown live while the window is being dragged.
         RunLoop.main.add(timer, forMode: .common)
