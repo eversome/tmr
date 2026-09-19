@@ -8,16 +8,17 @@ import TimerCore
 struct Tmr: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "tmr",
-        abstract: "A countdown timer for the terminal, with a sound at the end.",
+        abstract: "A countdown timer for the terminal or a floating window, with a sound at the end.",
         discussion: """
         Examples:
           tmr 5m                  five minutes, default sound
+          tmr -u -a -t 1m         floating window, default sound
           tmr -t 25m -n focus     named timer
           tmr -a Submarine 90     pick a system sound
           tmr -a ~/gong.wav 1h    pick a file
           tmr -s 30               no sound
         """,
-        version: "0.1.0"
+        version: "0.2.0"
     )
 
     @Argument(help: "Duration: 90, 5m, 1h30m, 25:00.")
@@ -26,10 +27,10 @@ struct Tmr: ParsableCommand {
     @Option(name: [.short, .customLong("time")], help: "Duration, same syntax as the argument.")
     var time: String?
 
-    @Option(name: [.short, .long], help: "Name shown above the countdown.")
+    @Option(name: [.short, .long], help: "Name shown next to the countdown.")
     var name: String?
 
-    @Flag(name: [.short, .long], help: "Show a floating window (arriving in v0.2).")
+    @Flag(name: [.short, .long], help: "Show a floating window instead of the terminal view.")
     var ui = false
 
     @Option(name: [.customShort("a"), .customLong("alert")],
@@ -70,8 +71,7 @@ struct Tmr: ParsableCommand {
             result.append(argument)
             if argument == "-a" || argument == "--alert" {
                 let next = index + 1 < arguments.count ? arguments[index + 1] : nil
-                let missingValue = next == nil || next!.hasPrefix("-")
-                if missingValue {
+                if next == nil || next!.hasPrefix("-") {
                     result.append(Alert.defaultSound)
                 }
             }
@@ -97,10 +97,6 @@ struct Tmr: ParsableCommand {
             throw ValidationError(error.description)
         }
 
-        if ui {
-            warn("-u lands in v0.2; showing the terminal view for now")
-        }
-
         var alertPlayer: Alert?
         if !silent {
             alertPlayer = Alert(sound: alert, loops: ring)
@@ -110,88 +106,13 @@ struct Tmr: ParsableCommand {
         }
 
         let engine = TimerEngine(duration: duration, name: name)
-        let renderer: TimerRenderer = Terminal.isInteractive ? TUIRenderer() : PlainRenderer()
+        let policy = SessionPolicy(ring: ring, quitAfter: quitAfter, silent: silent)
 
-        renderer.start()
-        defer { renderer.stop() }
-
-        loop(engine: engine, renderer: renderer, alertPlayer: alertPlayer)
-    }
-
-    private func loop(engine: TimerEngine, renderer: TimerRenderer, alertPlayer: Alert?) {
-        let frameInterval: useconds_t = 80_000   // 12.5 fps, cheap and smooth enough
-        var finishedAt: Date?
-
-        while true {
-            let now = Date()
-
-            if engine.update(now: now).contains(.finished) {
-                finishedAt = now
-                if let player = alertPlayer {
-                    player.play()
-                } else if !silent {
-                    Terminal.bell()
-                }
-            }
-
-            let snapshot = engine.snapshot(now: now)
-            renderer.render(snapshot)
-            alertPlayer?.pump()
-
-            if let key = renderer.readKey() {
-                if handle(key: key, engine: engine, now: now, finished: finishedAt != nil) {
-                    alertPlayer?.stop()
-                    return
-                }
-                // A revived timer starts a fresh countdown.
-                if engine.snapshot(now: now).phase == .running {
-                    finishedAt = nil
-                    alertPlayer?.stop()
-                }
-            }
-
-            if let finishedAt = finishedAt, shouldExit(finishedAt: finishedAt, now: now, alertPlayer: alertPlayer) {
-                alertPlayer?.stop()
-                return
-            }
-
-            usleep(frameInterval)
+        if ui {
+            HUDDriver(engine: engine, alert: alertPlayer, policy: policy).run()
+        } else {
+            TerminalDriver(engine: engine, alert: alertPlayer, policy: policy).run()
         }
-    }
-
-    /// Returns true when the loop should end.
-    private func handle(key: Character, engine: TimerEngine, now: Date, finished: Bool) -> Bool {
-        switch key {
-        case "q", "Q", "\u{1B}", "\u{3}":
-            engine.apply(.stop, now: now)
-            return true
-        case " ", "p", "P":
-            if finished { return true }
-            engine.apply(.toggle, now: now)
-        case "+", "=":
-            engine.apply(.adjust(60), now: now)
-        case "-", "_":
-            engine.apply(.adjust(-60), now: now)
-        case "r", "R":
-            engine.apply(.reset, now: now)
-        default:
-            // Any other key dismisses a ringing timer, and is ignored otherwise.
-            if finished { return true }
-        }
-        return false
-    }
-
-    private func shouldExit(finishedAt: Date, now: Date, alertPlayer: Alert?) -> Bool {
-        if ring {
-            return false                                    // only a keypress ends it
-        }
-        if let quitAfter = quitAfter {
-            return now.timeIntervalSince(finishedAt) >= quitAfter
-        }
-        if let player = alertPlayer {
-            return !player.isPlaying                        // let the sound finish
-        }
-        return now.timeIntervalSince(finishedAt) >= 0.5
     }
 
     private func warn(_ message: String) {
