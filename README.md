@@ -40,6 +40,10 @@ tmr [<timespec>] [options]
       --bar-host <addr>  Bar address (default 10.0.4.20, the USB one)
       --bar-token <key>  Bar access key, needed over Wi-Fi only
       --bar-sound <name> Stock sound the bar plays at the end, or 'none'
+      --bar-color <c>    Clock and progress colour: a name or #RRGGBB
+      --bar-font <name>  Font for the clock on the bar
+      --bar-x <px>       Pin the clock's left edge instead of centering it
+      --no-bar-progress  Drop the progress bar along the bottom
       --list-bar-sounds  Print the bar's stock sounds and exit
 ```
 
@@ -67,13 +71,18 @@ because Raycast runs scripts with a minimal PATH.
 ## BUSY Bar
 
 `-b` adds the bar as a third output, alongside the terminal or the window. The
-countdown goes on the front 72x16 matrix, the timer's name and its finish time
-on the back panel, and the zeros blink there until the timer is dismissed.
+clock fills the front 72x16 matrix with a progress bar draining along its bottom
+two rows, the timer's name and its finish time go on the back panel, and when
+time is up the status LED flashes once and the digits blink until the timer is
+dismissed. The last five seconds turn red; everything else follows
+`--bar-color`, which takes a name (cyan, green, lime, amber, orange, red, pink,
+purple, blue, white) or a hex triplet.
 
 ```sh
 tmr -b 25m                              # over USB
 tmr -b --bar-host 192.168.1.20 25m      # over Wi-Fi
 tmr -b -u --bar-sound completed 25m     # window and bar together
+tmr -b --bar-color lime 25m             # pick the colour
 ```
 
 The end-of-timer sound is one the firmware already ships, played by stock path,
@@ -83,8 +92,11 @@ format, which is not documented, so it waits for v0.4.1.
 
 The engine ticks at 12 fps but the bar is behind an HTTP round trip, so
 `BarRenderer` sends at most twice a second, only on a real change, and never
-queues a second request behind the first. Everything drawn belongs to the
-`tmr` application name and is cleared on exit, Ctrl-C included.
+queues a second request behind the first. The firmware paints elements in the
+order it first saw their ids and keeps every id until the app is cleared, so the
+whole set goes out in a fixed order each frame, backgrounds first, and anything
+that should disappear is sent transparent rather than omitted. Everything drawn
+belongs to the `tmr` application name and is cleared on exit, Ctrl-C included.
 
 ## Design
 
