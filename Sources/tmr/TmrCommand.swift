@@ -67,6 +67,19 @@ struct Tmr: ParsableCommand {
     @Flag(name: .customLong("list-bar-sounds"), help: "List the bar's stock sounds and exit.")
     var listBarSounds = false
 
+    @Option(name: .customLong("bar-x"), help: "Pin the clock's left edge on the bar instead of centering it.")
+    var barX: Int?
+
+    @Option(name: .customLong("bar-font"), help: "Font for the clock on the bar.")
+    var barFont: String = "extra_large"
+
+    @Flag(name: .customLong("no-bar-progress"), help: "Drop the progress bar along the bottom of the display.")
+    var noBarProgress = false
+
+    @Option(name: .customLong("bar-color"),
+            help: "Colour of the clock and the progress bar: a name (cyan, green, lime, amber, orange, red, pink, purple, blue, white) or #RRGGBB.")
+    var barColor: String?
+
     /// ArgumentParser has no notion of an option whose value is optional, but
     /// `-a` on its own is part of the interface, so a bare `-a` gets the
     /// default value spliced in before parsing.
@@ -159,7 +172,19 @@ struct Tmr: ParsableCommand {
             }
         }
 
-        return BarOutput(renderer: BarRenderer(client: client), sound: sound)
+        var layout = BarRenderer.Layout()
+        layout.clockX = barX
+        layout.clockFont = barFont
+        layout.showProgress = !noBarProgress
+
+        if let barColor = barColor {
+            guard let accent = BarRenderer.color(named: barColor) else {
+                throw ValidationError("unknown --bar-color '\(barColor)'; use a name or #RRGGBB")
+            }
+            layout.accent = accent
+        }
+
+        return BarOutput(renderer: BarRenderer(client: client, layout: layout), sound: sound)
     }
 
     private func warn(_ message: String) {

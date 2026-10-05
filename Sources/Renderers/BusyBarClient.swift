@@ -12,6 +12,21 @@ import Foundation
 /// Over USB the bar comes up at 10.0.4.20 and needs no credentials. The access
 /// key only applies to connections arriving over Wi-Fi.
 public final class BusyBarClient {
+    /// The firmware paints elements in the order it first saw their ids and
+    /// remembers every id until the app is cleared, so the full set goes out in
+    /// a fixed order on every frame, backgrounds first.
+    public enum Element: Encodable {
+        case text(TextElement)
+        case rectangle(RectangleElement)
+
+        public func encode(to encoder: Encoder) throws {
+            switch self {
+            case .text(let element): try element.encode(to: encoder)
+            case .rectangle(let element): try element.encode(to: encoder)
+            }
+        }
+    }
+
     public struct TextElement: Encodable {
         public let id: String
         public let type: String = "text"
@@ -19,14 +34,57 @@ public final class BusyBarClient {
         public let y: Int
         public let text: String
         public let font: String
+        public let color: String
+        public let align: String
         public let display: String
 
-        public init(id: String, x: Int, y: Int, text: String, font: String, display: Display) {
+        /// Colors are #RRGGBBAA. `align` of "top_mid" centers on x, which is
+        /// why none of this has to measure glyphs.
+        public init(id: String, x: Int, y: Int, text: String, font: String,
+                    color: String = "#FFFFFFFF", align: String = "top_left",
+                    display: Display) {
             self.id = id
             self.x = x
             self.y = y
             self.text = text
             self.font = font
+            self.color = color
+            self.align = align
+            self.display = display.rawValue
+        }
+    }
+
+    public struct RectangleElement: Encodable {
+        public let id: String
+        public let type: String = "rectangle"
+        public let x: Int
+        public let y: Int
+        public let width: Int
+        public let height: Int
+        public let fill: String
+        public let fillColors: [String]
+        public let borderWidth: Int
+        public let display: String
+
+        enum CodingKeys: String, CodingKey {
+            case id, type, x, y, width, height, fill, display
+            case fillColors = "fill_colors"
+            case borderWidth = "border_width"
+        }
+
+        /// borderWidth defaults to 1 on the firmware, which outlines every
+        /// rectangle in white; these are all fills, so it stays 0.
+        public init(id: String, x: Int, y: Int, width: Int, height: Int,
+                    fill: String = "solid", fillColors: [String],
+                    borderWidth: Int = 0, display: Display) {
+            self.id = id
+            self.x = x
+            self.y = y
+            self.width = max(1, width)
+            self.height = max(1, height)
+            self.fill = fill
+            self.fillColors = fillColors
+            self.borderWidth = borderWidth
             self.display = display.rawValue
         }
     }
@@ -82,11 +140,13 @@ public final class BusyBarClient {
 
     private struct DrawPayload: Encodable {
         let applicationName: String
-        let elements: [TextElement]
+        let elements: [Element]
+        let ledNotificationColor: String?
 
         enum CodingKeys: String, CodingKey {
             case applicationName = "application_name"
             case elements
+            case ledNotificationColor = "led_notification_color"
         }
     }
 
@@ -122,8 +182,18 @@ public final class BusyBarClient {
 
     // MARK: - Calls
 
-    public func draw(_ elements: [TextElement], completion: @escaping (Result<Void, Error>) -> Void) {
-        let payload = DrawPayload(applicationName: applicationName, elements: elements)
+    /// `ledColor` rides along with the frame and flashes the status LED. Send
+    /// it on a state change only: at frame rate it would strobe.
+    public func draw(
+        _ elements: [Element],
+        ledColor: String? = nil,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        let payload = DrawPayload(
+            applicationName: applicationName,
+            elements: elements,
+            ledNotificationColor: ledColor
+        )
         send("POST", path: "/api/display/draw", body: payload, completion: completion)
     }
 
